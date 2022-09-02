@@ -1,0 +1,1056 @@
+---
+title: "MDS Final Project"
+output:
+  pdf_document: default
+  word_document: default
+---
+# Prediction of Employee Attrition
+
+## Team: Lalita Takle (NetID: ltakle2), Mihir Sircar (NetID: msircar2), Rajat Kumar (NetID: rajat3)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+The success of any organization largely depends on the performance of its employees. Employee Attrition is becoming a serious problem because of the increasing competition in the corporate world and it impacts all types of businesses, irrespective of geography, industry and size of the company. Employee attrition leads to significant costs for a business, including the cost of business disruption, hiring new staff and training new staff.
+
+Now let’s go to the importance of this study or how it will solve the existing problem setting. Identifying the specific reasons and factors which might lead to employee attrition would help the company management to take necessary measures well beforehand in effort towards retaining the maximum number of employees. The HR department will then be able to focus on improving the factors which are leading to Employee dissatisfaction, resulting in reducing companies’ losses.
+
+```{r}
+library(scales)
+library(plotrix)
+library(dplyr)
+library(plyr)
+library(ROSE)
+library(tree)
+library(randomForest)
+library(gbm)
+library(ggplot2)
+library(corrplot)
+library(scales)
+library(caret)
+library(MASS)
+library(pROC)
+library(e1071)
+library(rminer)
+```
+## Dataset
+
+For exploring the HR analytics domain, we have used the IBM HR Analytics dataset from Kaggle. This is a fictional dataset created by IBM data scientists for analysis purposes. 
+
+**Reading the data**
+
+```{r}
+data = read.csv('HR_Employee_Attrition.csv')
+head(data)
+```
+**Checking te dimensions of data**
+```{r}
+dim(data)
+```
+The dataset has 1,470 data points (rows) and 35 features (columns) describing each employee’s background and characteristics. Here, attrition is the response variable which we are trying to predict.  
+
+```{r}
+names(data)
+```
+
+Renaming the Age column correctly.
+```{r}
+names(data)[1] = 'Age'
+```
+
+```{r}
+str(data)
+```
+
+There looks like 18 categorical and 17 numerical variables in the data set.
+
+The categorical columns are currently character datatype. Let us convert them to factor type. Also, let us set Attrition variable to 1 and 0 instead of "Yes" and "No".
+```{r}
+cat_cols= c("BusinessTravel", "Department", "Education", "EducationField", "EnvironmentSatisfaction", "Gender", "JobInvolvement", "JobLevel", "JobRole", "JobSatisfaction", "MaritalStatus", "Over18", "OverTime", "PerformanceRating", "RelationshipSatisfaction", "StockOptionLevel", "WorkLifeBalance","Attrition")
+data$Attrition = ifelse(data$Attrition=="Yes",1,0)
+data[cat_cols] = lapply(data[cat_cols], factor)
+```
+
+Checking summary of data
+```{r}
+summary(data)
+```
+
+Employee Count is equal to 1 for all observation which can not generate useful value for this sample data. 
+Over 18 is equal to ‘Y’, which means employee is not less than 18 years old. 
+
+Similarly,Standard Hours is equal to 80 for all observations and hence is not useful for classification. 
+
+Employee Number is simply an ID associated with each employee and is also not useful for classification. So let us disregard these 4 variables from the further analyses.
+
+```{r}
+data = data[-c(9,10,22,27)]
+```
+
+Let us check for NA and duplicate values in the dataset.
+
+```{r}
+apply(is.na(data), 2, sum)
+sum(is.na(duplicated(data)))
+```
+Thankfully, the data has no NA and duplicate values.
+
+## In this analysis we would answering few research questions related to Employee Attrition. 
+## They are mentioned later on in this document.
+
+
+## Exploratory Data Analysis for this dataset to provide a initial intution on the dataset.
+
+Let us first check the proportion of the response variable that is Attrition.
+```{r}
+# Plotting the count of the attribution attribute
+
+ggplot(data, aes(Attrition)) +
+  geom_bar(position = "dodge", aes(y=(..count..)/sum(..count..), fill=Attrition)) + 
+  scale_y_continuous(labels=scales::percent) +
+  ylab("Percentage") +
+  xlab("Attriton") +
+  geom_text(aes(label = scales::percent((..count..)/sum(..count..)), y=(..count..)/sum(..count..)), stat= "count",vjust =-.5)+
+  scale_fill_brewer(palette="Set2")
+```
+Upon checking for the proportion of values in our response variable, i.e. Attrition we realized that the data is severely imbalanced. This means that even without training any model, if we predict all the responses as '0', still we will get an accuracy of 83.88% (1233*100/1470). We consider this as our 'base model' for future reference. However, this model would have a poor performance if the test set has majorly '1' as the response variable. 
+
+We are oversampling this data set while developing the model.
+
+
+Let us know first check correlation among different variables.
+
+
+```{r}
+data_cor=data
+for(i in 1:ncol(data_cor)){
+data_cor[,i]<-as.integer(data_cor[,i])
+}
+corrplot(cor(data_cor), type = 'lower', tl.cex = 0.6)
+
+
+```
+Looking at the above plots we can conclude the following : - 
+
+# Age variable is correlated with TotalWorkingYears
+# TotalWorkingYears correlated with MonthlyIncome
+# YearsWithCurrManager also correlated with YearsAtCompany
+# YearsWithCurrManger correlated with YearsInCurrentRole
+# YearsInCurrentRole correlated with YearsAtCompany
+# TotalWorkingYears correlated with JobLevel
+
+# We would definitely need some of the above predictors while making predictions.
+
+
+Let us now proceed to have a quick glance to the other predictors of the data set.
+
+# Understanding Department Predictor.
+
+```{r}
+summary(data$Department)
+
+```
+
+```{r}
+table(data$Department, data$Attrition)
+
+```
+
+```{r}
+dept_plot = ggplot(data,aes(Department,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+dept_plot
+```
+The proportion of Attrition is similar in the Sales and Human resources department. However, in case of R&D, there is a comparatively less proportion of Attrition. The possible reason for this might be because of the fact that getting accustomed to a company’s R&D department can be very tedious and hence people in this department do not prefer switching their jobs.
+
+
+# Understanding Age Predictor.
+
+```{r}
+
+summary(data$Age)
+```
+
+```{r}
+age_plot = ggplot(data,aes(Age,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+age_plot
+```
+
+As we can clearly see in the graph, young employees tend to switch their jobs. However, people who show a commitment to the company by working for several years find stability within the organization and hence do not change their jobs frequently. 
+
+
+Besides the variables mentioned so far, we tried to look for any other factors that had significant effect on the Attrition variable.
+
+# Understanding Job Role Predictor
+```{r}
+
+summary(data$JobRole)
+
+```
+
+```{r}
+
+table(data$JobRole, data$Attrition)
+
+```
+
+```{r}
+jrole_plot = ggplot(data,aes(JobRole,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)+theme(axis.text.x = element_text(angle=90, vjust=.5, hjust=1))
+jrole_plot
+```
+
+We found out that for the JobRole variable, SalesRepresentative had the maximum proportion of Attrition. The possible explanation for this can be that Sales jobs are generally incentive-based and have less ties with the company. Hence, it might be easier for people to switch jobs for better incentives.
+
+
+# Understanding Monthly Income
+```{r}
+
+summary(data$MonthlyIncome)
+
+```
+
+```{r}
+boxplot(MonthlyIncome~Attrition, data = data)
+```
+Next, we found out that  MonthlyIncome also had considerable effect on Attrition. Majority of Employees in the Attrition group have a monthly income of less than 5000$.
+
+
+# Understanding Overtime Predictor
+
+```{r}
+summary(data$OverTime)
+
+```
+
+```{r}
+overtime_plot = ggplot(data,aes(OverTime,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+overtime_plot
+```
+
+We also observed that, the proportion of Attrition among the people working overtime is more than that of people who do not work Overtime. 
+
+# Understanding BusinessTravel Predictor
+
+```{r}
+summary(data$BusinessTravel)
+
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=BusinessTravel))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~BusinessTravel)+
+  labs(x="Attrition",y="Percentage",title="Attrition vs. BusinessTravel")+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),plot.title=element_text(size=16,hjust=0.5))+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ylab("relative frequencies") +
+  scale_fill_brewer(palette="Set3")
+```
+Here, we can see that the proportion of Attrition among the Frequent travelers is greater than that of those who do not travel frequently.
+
+# Understanding DailyRate Predictor
+
+```{r}
+
+summary(data$DailyRate)
+```
+
+```{r}
+boxplot(DailyRate~Attrition, data = data)
+```
+There is no significant effect of Daily Rate seen on Attrition.
+
+
+# Understanding Hourly Rate Predictor
+
+```{r}
+summary(data$HourlyRate)
+
+```
+
+```{r}
+boxplot(HourlyRate~Attrition, data = data)
+```
+Not much relation is observed between HourlyRate and the Attrition.
+
+
+# Understanding Monthly Rate Predictor
+
+```{r}
+summary(data$MonthlyRate)
+
+```
+
+```{r}
+boxplot(MonthlyRate~Attrition, data = data)
+```
+Not much relation is observed between Attrition and MonthlyRate. 
+
+
+
+# Understanding DistanceFromHome - Distance from home in kms¶
+
+```{r}
+summary(data$DistanceFromHome)
+
+```
+
+```{r}
+boxplot(DistanceFromHome~Attrition, data = data)
+```
+There is no significant effect of Distance From Home seen on Attrition.
+
+# Understanding Education - Education Level 1 'Below College' 2 'College' 3 'Bachelor' 4 'Master' 5 'Doctor'
+
+```{r}
+summary(data$Education)
+
+```
+
+```{r}
+table(data$Education, data$Attrition)
+
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=Education))+
+  geom_bar(aes(y=..prop..,fill=factor(..group..)),stat="count")+
+  facet_grid(~Education)+
+  labs(x="Attrition",y="Percentage",title="Attrition vs. EducationLevel")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ylab("relative frequencies") +
+  scale_fill_discrete(name="Education Level", label=c("Below College", "College", "Bachelor", "Master", "Doctor") )
+
+```
+There is no significant effect of Education Level predictor seen on Attrition.
+
+
+# Understanding Education Field - Field of education
+
+
+```{r}
+summary(data$EducationField)
+
+```
+
+```{r}
+table(data$EducationField, data$Attrition)
+
+```
+
+```{r}
+
+ggplot(data,aes(x=Attrition,group=EducationField))+
+  geom_bar(aes(y=..prop..,fill=factor(..group..)),stat="count")+
+  facet_grid(~EducationField)+
+  labs(x="Attrition",y="Percentage",title="Attrition vs. EducationField")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_y_continuous(labels=scales::percent) +
+  ylab("relative frequencies") +
+  scale_fill_discrete(name="EducationField ", label=c("Human Resources", "Life Sciences", "Marketing", "Medical", "Other", "Technical Degree") )
+
+```
+It is observed that HR, Marketing and Technical degrees have higher Attrition proportions when compared to other Educational Fields.
+
+
+# Understanding Environment Satisfaction predictor
+
+```{r}
+summary(data$EnvironmentSatisfaction)
+
+```
+
+```{r}
+table(data$EnvironmentSatisfaction, data$Attrition)
+
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=EnvironmentSatisfaction), ordered=T)+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~EnvironmentSatisfaction)+
+  scale_y_continuous(labels=scales::percent) +
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="Environment Satisfaction Vs. Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set2")
+```
+Employees with lower Environment Satisfaction tend to leave their jobs. 
+
+
+# Understanding JobSatisfaction Predictor
+
+```{r}
+summary(data$JobSatisfaction)
+
+```
+
+```{r}
+table(data$JobSatisfaction, data$Attrition)
+
+```
+
+```{r}
+jsatisfaction_plot = ggplot(data,aes(JobSatisfaction,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+jsatisfaction_plot
+```
+
+Similar to the Environment Satisfaction,  lower Job Satisfaction make employees leave their jobs.
+
+
+# Understanding Gender Predictor
+```{r}
+summary(data$Gender)
+
+```
+
+```{r}
+table(data$Gender, data$Attrition)
+
+```
+
+```{r}
+gender_plot = ggplot(data,aes(Gender,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+gender_plot
+```
+There doesn't seem much relationship between Gender and Attrition.
+
+
+
+# Understanding JobInvolvement Predictor
+
+```{r}
+
+summary(data$JobInvolvement)
+
+```
+
+```{r}
+
+table(data$JobInvolvement)
+
+```
+
+```{r}
+
+ggplot(data,aes(x=JobInvolvement,group=Attrition))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~Attrition)+
+  scale_y_continuous(labels=scales::percent) +
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="Job Involvement Vs. Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set3")
+
+```
+It is observed that as the JobInvolvement decreases, the proportion of Attrition also decreases. This suggests that employees with higher JobInvolvement tend to leave their jobs much easily.
+
+
+# Understanding Job Level Predictor
+
+```{r}
+summary(data$JobLevel)
+
+```
+
+```{r}
+table(data$JobLevel, data$Attrition)
+
+```
+
+
+```{r}
+ggplot(data,aes(x=Attrition,group=JobLevel))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~JobLevel)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="Job Level Vs Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set2")
+```
+Higher Job levels tend to have lower Attrition.
+
+
+# Understanding MaritalStatus Predictor.
+
+```{r}
+summary(data$MaritalStatus)
+
+```
+
+```{r}
+table(data$MaritalStatus, data$Attrition)
+
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=MaritalStatus))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~MaritalStatus)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="Marital Status Vs Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set3")
+```
+It is observed that Single employees tend to have higher proportion of Attrition when compared to Married or Divorced employees. This might be because they are willing to take risks.
+
+
+# Understanding NumCompaniesWorked Predictor.
+
+```{r}
+summary(data$NumCompaniesWorked)
+
+```
+
+
+```{r}
+
+ggplot(data,aes(x=Attrition,group=NumCompaniesWorked))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~NumCompaniesWorked)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="NumCompaniesWorked Vs Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set2") 
+
+#Attrition is higher when an employee has worked with 5 or more companies.
+
+```
+Attrition is higher when an employee has worked with 5 or more companies.
+
+
+# Understanding PercentSalaryHike - Percent salary hike for last year Predictor
+
+```{r}
+summary(data$PercentSalaryHike)
+
+```
+
+```{r}
+boxplot(PercentSalaryHike~Attrition, data = data)
+```
+Not much relation is observed between PercentSalaryHike and Attrition.
+
+
+# Understanding PerformanceRating Predictor
+
+```{r}
+
+summary(data$PerformanceRating)
+
+```
+
+
+```{r}
+prating_plot = ggplot(data,aes(PerformanceRating,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+prating_plot
+```
+Performance rating also does not look like have any strong effect on Attrition.
+
+# Understanding Relationship Satisfaction Predictor
+
+```{r}
+summary(data$RelationshipSatisfaction)
+
+```
+
+```{r}
+relsatisfaction_plot = ggplot(data,aes(RelationshipSatisfaction,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+relsatisfaction_plot
+```
+Not a great effect but there seems some connection of attrition with lower relationship satisfaction.
+
+
+# Understanding StockOptionLevel Predictor
+
+```{r}
+summary(data$StockOptionLevel)
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=StockOptionLevel))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~StockOptionLevel)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="StockOptionLevel Vs Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set3")
+```
+Higher attrition is observed for 0 stockOptionLevel. 
+
+
+# Understanding TotalWorkingYears - Total number of years the employee has worked so far 
+
+```{r}
+
+summary(data$TotalWorkingYears)
+```
+
+```{r}
+totworkyears_plot = ggplot(data,aes(TotalWorkingYears,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+totworkyears_plot
+```
+
+```{r}
+boxplot(TotalWorkingYears~Attrition, data = data)
+```
+Rate of Attrition is less in case there are long working years (preferably 10 or more).
+
+
+# Understanding TrainingTimesLastYear - Number of times training was conducted for this employee last year.
+
+```{r}
+table(data$TrainingTimesLastYear)
+
+```
+
+```{r}
+table(data$TrainingTimesLastYear, data$Attrition)
+
+```
+
+```{r}
+ggplot(data,aes(x=Attrition,group=TrainingTimesLastYear))+
+  geom_bar(aes(y=..prop..,fill=factor(..x..)),stat="count")+
+  facet_grid(~TrainingTimesLastYear)+
+  theme(axis.text.x=element_text(angle=90,vjust=0.5),legend.position="none",plot.title=element_text(size=16,hjust=0.5))+
+  labs(x="Attrition",y="Percentage",title="TrainingTimesLastYear Vs Attrition %")+
+  geom_text(aes(label = scales::percent(..prop..), y = ..prop.. ),stat= "count",vjust =-.5) +
+  scale_fill_brewer(palette="Set3")
+```
+TrainingTimesLastYear predictor could effect Attrition.
+
+
+# Understanding WorkLifeBalance Predictor
+
+```{r}
+summary(data$WorkLifeBalance)
+
+```
+
+```{r}
+worklifebalance_plot = ggplot(data,aes(WorkLifeBalance,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+worklifebalance_plot
+```
+WorkLifeBalance could affect Attrition Rate.
+
+
+# Understanding YearsAtCompany Predictor
+
+```{r}
+summary(data$YearsAtCompany)
+
+```
+
+```{r}
+yearsatcompany_plot = ggplot(data,aes(YearsAtCompany,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+yearsatcompany_plot
+```
+There is no significant relation between YearsAtCompany and Attrition.
+
+
+# Understanding YearsInCurrentRole Predictor
+
+```{r}
+summary(data$YearsInCurrentRole)
+
+```
+
+```{r}
+boxplot(YearsInCurrentRole~Attrition, data = data)
+```
+It is observed that lower attrition rates with Employees having Higher Years of Current Role in the company.
+
+
+# Understanding YearsSinceLastPromotion Predictor
+
+```{r}
+summary(data$YearsSinceLastPromotion)
+
+```
+
+```{r}
+yearssinceprom_plot = ggplot(data,aes(YearsSinceLastPromotion,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+yearssinceprom_plot
+```
+Not much significant relation is observed.
+
+
+# Understanding YearsWithCurrManager Predictor
+```{r}
+summary(data$YearsWithCurrManager)
+
+```
+
+```{r}
+yearswithmanager_plot = ggplot(data,aes(YearsWithCurrManager,fill=Attrition))+geom_bar(position="fill")+scale_y_continuous(labels = percent)
+yearswithmanager_plot
+```
+It is observed that as the YearswithCurrManager increases, the proportion of attrition decreases.
+ 
+Based on EDA, 
+- We found several features that have visible effect on the target variable:
+ - **age**, **total_working_years**, **years_at_company**, **years_in_current_role** and **monthly_income** -numerical
+ - **over_time**, **marital_status** and **job_role** - nominal categorical
+ - **business_travel**, **job_level** and **stock_option_level** - ordinal categorical
+ 
+ 
+ - The profile of a worker who is most likely to be churned:
+  1. Young
+  2. Low salary
+  3. Working overtime
+  4. Single
+  5. Working as a sales rep or a lab tech
+  6. Has a low overall satisfaction level
+  7. Travels frequently
+  8. Has stock level set to 0
+
+ --------------------------------------------------------------------------------------------------------------------
+
+# Model Building
+
+As seen previously, there seems to be imbalance in the dataset, so we would be sampling the dataset using ovun.sample funcion which is a part of 'ROSE' package.
+
+```{r}
+set.seed(1)
+data_over = ovun.sample(Attrition~., data = data, method = "both", N = 1470)$data
+print(table(data_over$Attrition))
+```
+
+Here, method='both' is a combination of over-sampling and under-sampling technique. The majority class i.e. '0' is under-sampled whereas the majority class i.e. '1' is over-sampled. 
+
+```{r}
+sapply(data_over,class)
+```
+
+**Splitting the data in Test and Train data.**
+
+We have divided our sample in 70:30 ratio for train and test set.
+
+```{r}
+set.seed(1)
+split = sort(sample(nrow(data_over), nrow(data_over)*.7))
+train=data_over[split,]
+test=data_over[-split,]
+```
+
+
+# Implementing Logistic Regression Model
+
+```{r}
+set.seed(1)
+glm.fit = glm(Attrition~.,data=train,family=binomial)
+summary(glm.fit)
+```
+As you can see, the significant variables in predicting Attrition through Logistic regression are somewhat similar to our findings through EDA. Mainly factors such as Age, MonthlyIncome, JobRole, YearsAtCompany and OverTime have been seen to affect Attrition. This means, Employees mostly change their jobs for better pay in the early years of their career. 
+
+
+# Predicting using fitted Logitsic Regression Model
+```{r}
+glm.probs = predict(glm.fit, test, type="response")
+glm.pred=rep(0,length(glm.probs))
+glm.pred[glm.probs > 0.5] <- 1
+table(glm.pred,test$Attrition)
+```
+
+# Model Statistics
+```{r}
+confusionMatrix(as.factor(glm.pred), test$Attrition, mode = "prec_recall", positive="1")
+```
+Thus, we have achieved 79% accuracy with Logistic Regression Model. The Precision, Recall and F1 score is also 79%.
+
+
+# Let us now implement Linear Discrimant Analysis (LDA) model.
+
+```{r}
+set.seed(1)
+lda.fit = lda(Attrition~.,data=train)
+lda.fit
+```
+
+# Plotting the model
+```{r}
+plot(lda.fit)
+```
+# Prediction using LDA model
+```{r}
+lda.pred=predict (lda.fit,test)
+names(lda.pred)
+lda.class=lda.pred$class
+```
+
+
+# Model Performance and Statistics.
+```{r}
+confusionMatrix(as.factor(lda.class), test$Attrition, mode = "prec_recall", positive="1")
+```
+The coefficients of linear discriminants output provide the linear combination of all the predictor variables that are used to perform the LDA decision rule. We plotted these discriminants. It is seen that these classes overlap to some extent and LDA performs poorly when compared to Logistic regression. We have also achieved a similar accuracy as of Logistic Regression for Linear Discriminant Analysis model i.e. 79%.
+
+
+# Implementing Decision Tree Model.
+```{r}
+set.seed(1)
+tree.ibm = tree(Attrition~., data=train)
+summary(tree.ibm)
+```
+
+As we can see, out of the 36 variables that we had, these 18 variables were actually used by the model for tree construction. The Residual mean deviance which is a measure of the error remaining in the tree after construction is 61.75%. We see that the 'Misclassification error rate' which is the proportion of observations that were predicted to fall in another class than they actually did is 13.4%
+
+# Prediction using Tree Model.
+```{r}
+tree.pred = predict(tree.ibm , test, type = "class")
+confusionMatrix(tree.pred, test$Attrition, mode = "prec_recall", positive="1")
+```
+We then evaluated the performance of this model on the testing set. The model was able to achieve an accuracy of 79.14% on the test dataset with an F1 score of 80%. F1 score is calculated using a harmonic mean of precision and recall. 
+
+
+# Roc Curve to determine the how well the fit is (model accuracy) 
+
+```{r}
+dtree.plot = plot.roc (as.numeric(test$Attrition), as.numeric(tree.pred),lwd=2, type="b", print.auc=TRUE, col ="blue")
+
+```
+AUC of 0.781 makes it a decent fit for this dataset. We will try fitting other models to check if we can improve on these results.
+
+Since the performance of this model is relatively poor, so we tried implementing some o†her techniques to improve its performance in terms of accuracy, F1 score and AUC value.
+
+
+Firstly, we tried a pruning the tree to check whether we can achieve a better performance.
+
+```{r}
+cv.ibm = cv.tree(tree.ibm , FUN = prune.misclass)
+cv.ibm
+```
+
+```{r}
+plot(cv.ibm$size , cv.ibm$dev, type = "b")
+```
+Cv.ibm$dev corresponds to the number of cross-validation errors. The tree with 32 terminal nodes results in the least cross-validation errors. Hence, we consider 32 nodes while building the pruned model.
+
+```{r}
+prune.ibm = prune.misclass(tree.ibm , best = 32)
+tree.pred.prune = predict(prune.ibm , test, type = "class")
+confusionMatrix(tree.pred.prune, test$Attrition, mode = "prec_recall", positive="1")
+```
+
+```{r}
+
+dtree.pred.prune = plot.roc (as.numeric(test$Attrition), as.numeric(tree.pred.prune),lwd=2, type="b", print.auc=TRUE, col ="blue")
+
+
+```
+
+
+We do not see great improvement in the accuracy of the model with respect to the previous non-pruned model. 
+Even though there is a slight improvement in the precision, there's a corresponding dip in the recall which leads to an overall low F1 score as compared to the previous model. Hence, we can conclude that pruning the tree is not that beneficial in this case. Not much difference is observed in AUC value as well.
+
+
+Our next approach is to implement Bagging model.
+
+```{r}
+set.seed (1)
+bag.ibm = randomForest(Attrition~., data = train, mtry = ncol(train)-1, importance = TRUE)
+```
+
+Bagging is simply a special case of a random forest where the value of mtry is equal to the total number of all predictors.
+
+```{r}
+yhat.bag = predict(bag.ibm , newdata = test)
+confusionMatrix(yhat.bag, test$Attrition, mode = "prec_recall", positive="1")
+```
+
+We then evaluated the performance of this model on the testing set. The model was able to achieve an accuracy of 90.93% on the test dataset with an F1 score of 90.78%. 
+
+The performance of this model is better than all the previously implemented models.
+
+Next, we consider the performance of random forest model.
+
+```{r}
+set.seed (1)
+bag.ibm2 = randomForest(Attrition~., data = train, mtry = sqrt((ncol(train)-1)), importance = TRUE)
+```
+
+By default, we use the value of mtry as the square root of the total number of predictors in case of random forest for classification.
+
+
+```{r}
+yhat.bag2 = predict(bag.ibm2 , newdata = test)
+confusionMatrix(yhat.bag2, test$Attrition, mode = "prec_recall", positive="1")
+```
+
+# Roc Plot to determine, how good the fit is.
+
+```{r}
+
+rf.Plot = plot.roc (as.numeric(test$Attrition), as.numeric(yhat.bag2),lwd=2, type="b", print.auc=TRUE,col ="blue")
+
+```
+
+We then evaluated the performance of this model on the testing set. The model was able to achieve an accuracy and f1 score of around 91% on the test set which is one of the best rates we have got so far. 
+AUC is observed as .914 making it a competitive fit.
+
+```{r}
+importance(bag.ibm2)
+```
+We went on to see the features which impact the most to our response variable.
+
+As observed in the EDA and previous analysis, here also we can see that Age, JobRole and MonthlyIncome have a high gini index which means that they have a high importance. 
+
+However, overtime and department do not play much role as opposed to the results from EDA.
+
+Lastly we tried implementing the SVM Model in the dataset. As mentioned earlier, of having an imbalanced dataset, we tried implementing with both imbalanced and balanced dataset.
+
+```{r}
+# Again reading the data set.
+input_data = read.csv("HR_Employee_Attrition.csv")
+
+#Making necessary variables as factors
+input_data$Attrition = as.factor(input_data$Attrition)
+input_data$BusinessTravel = as.factor(input_data$BusinessTravel)
+input_data$Department = as.factor(input_data$Department)
+input_data$Gender = as.factor(input_data$Gender)
+input_data$JobRole = as.factor(input_data$JobRole)
+input_data$MaritalStatus = as.factor(input_data$MaritalStatus)
+input_data$EducationField = as.factor(input_data$EducationField)
+input_data$Education = as.factor(input_data$Education)
+input_data$JobLevel = as.factor(input_data$JobLevel)
+input_data$StockOptionLevel = as.factor(input_data$StockOptionLevel)
+input_data$EnvironmentSatisfaction = as.factor(input_data$EnvironmentSatisfaction)
+input_data$JobSatisfaction = as.factor(input_data$JobSatisfaction)
+input_data$WorkLifeBalance = as.factor(input_data$WorkLifeBalance)
+input_data$JobInvolvement = as.factor(input_data$JobInvolvement)
+input_data$PerformanceRating = as.factor(input_data$PerformanceRating)
+input_data$OverTime = as.factor(input_data$OverTime)
+
+```
+
+First implementing the SVM model on an imbalanced data set. As seen below an imbalance is of around 85%-15%.
+
+```{r}
+table(input_data$Attrition) 
+```
+
+```{r}
+
+# SVM without oversampling
+
+svmData = input_data
+
+svmData$EmployeeCount = NULL #Every value is 1 so, we are dropping this variable
+svmData$StandardHours = NULL #Every value is 8 so, we are dropping this variable
+svmData$EmployeeNumber = NULL
+svmData$Over18 = NULL
+
+
+set.seed(1)
+indexes = sample(1:nrow(svmData), size=0.8*nrow(svmData))
+SVMtrain.Data = svmData[indexes,]
+SVMtest.Data = svmData[-indexes,]
+tuned = tune(svm,factor(Attrition)~.,data = SVMtrain.Data)
+svm.model = svm(SVMtrain.Data$Attrition~., data=SVMtrain.Data
+                 ,type="C-classification", gamma=tuned$best.model$gamma
+                 ,cost=tuned$best.model$cost
+                 ,kernel="radial")
+svm.prd = predict(svm.model,newdata=SVMtest.Data)
+confusionMatrix(svm.prd,SVMtest.Data$Attrition)
+
+```
+
+Looking at the above results at first glance, one might be tempted to say that this model could be a great fit. However, AUC value might have a different say on this. Let us check for that.
+
+```{r}
+
+svm.plot = plot.roc (as.numeric(SVMtest.Data$Attrition), as.numeric(svm.prd),lwd=2, type="b", print.auc=TRUE,col ="blue")
+
+```
+
+With AUC value of 0.531, this model seems to perform and hence one might easily conclude that accuracy should not be ultimate choice for model performance. It is quite evident to say as well that imbalance dataset has also played its part in this model. 
+
+So, we tried implementing the SVM after oversampling the data.
+
+
+# SVM with oversampling
+
+```{r}
+
+svmData = data_over
+
+svmData$EmployeeCount = NULL #Every value is 1 so, we are dropping this variable
+svmData$StandardHours = NULL #Every value is 8 so, we are dropping this variable
+svmData$EmployeeNumber = NULL
+svmData$Over18 = NULL
+
+
+set.seed(1)
+indexes = sample(1:nrow(svmData), size=0.7*nrow(svmData))
+SVMtrain.Data <- svmData[indexes,]
+SVMtest.Data <- svmData[-indexes,]
+tuned = tune(svm,factor(Attrition)~.,data = SVMtrain.Data)
+svm.model <- svm(SVMtrain.Data$Attrition~., data=SVMtrain.Data
+                 ,type="C-classification", gamma=tuned$best.model$gamma
+                 ,cost=tuned$best.model$cost
+                 ,kernel="radial")
+svm.prd = predict(svm.model,newdata=SVMtest.Data)
+confusionMatrix(svm.prd,SVMtest.Data$Attrition)
+```
+
+Accuarcy, Sensitivity and Specificity looks good. Lets double check the AUC value for full confirmation.
+
+```{r}
+
+svm.plot = plot.roc (as.numeric(SVMtest.Data$Attrition), as.numeric(svm.prd),lwd=2, type="b", print.auc=TRUE,col ="blue")
+
+```
+With an AUC value of 0.805 the model looks a good fit for the dataset. 
+
+With this model we were specifically trying to convey the impact of the imbalanced dataset and how different performance measures can be used in determining the model performance. It can clearly seen that accuracy may be false indication of model performance.
+
+
+-----------------------------------------------------------------------------------------------------------------
+
+After implementing the various models and EDA Analysis, we are in a better state to answer below research questions.
+
+**1) What proportion of the staff is leaving and where is it occurring?**
+
+As seen through analysis, rate of attrition is comparatively low in companies, though there are departments like Tech and Sales where Atrrition is relatively higher.
+
+**2) How does age affect attrition?**
+
+Age does affect attrition.
+
+**3) What other factors else contribute to the attrition? **
+
+Factors of Overtime, Monthly Income, Years at Company also affect attrition.
+
+**4)How well can we predict future attritions? **
+
+Based on various models, we are able to gain a prediction rate of 80 - 89 %, which is pretty satisfying.
+
+**5)How can the organization reduce the rate of attrition inside the company?**
+
+It is slightly difficult to predict, looking in different department levels, but to generalize Monthly Income, Years at Company and Job satisfaction are few good factors to keep in check in order to reduce Attrition.
+
+
+Lastly, there are many solutions to this problem in the kaggle, we tried differentiating from these published solution in terms by applying more models and keeping in check the imbalance dataset issue. We also looked beyond the accuracy as the sole parameter for model performance.
+
+As far as our collaboration goes, We started with the initial assessment of the dataset,  exploring together and finding  the features that could affect our response variable. All three of us started exploring the data and its features to understand the relationships between the variables. After that, we had a discussion upon our findings and understood what all variables were completely irrelevant for our analysis and decided to exclude them. 
+
+Through EDA, we together looked onto the important aspects of various predictors. After the completion of EDA, we divided the modelling techniques to be implemented among each other. 
+**Lalita** worked on Logistic Regression and Linear Discriminant Analysis, 
+**Mihir** worked on Decision Trees and Random Forests and 
+**Rajat** worked on SVM with and without sampling. 
+
+All 3 of us worked on comparison of models and understanding the best working model and finally collaborating the results along with the visualizations in our final report.
+
+Finally, we observed that this project could be very useful for any organization in getting insights about the factors that might lead to Employee Attrition. In future we would like to create dashboards given more friendly insights of factors affecting attrition. We would also like to test our prediction rate on some other real company dataset.
+ 
+
+
+
+
+
+
